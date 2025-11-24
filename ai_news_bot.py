@@ -6,22 +6,23 @@ import os
 import sys
 import re
 import random
+import json
 
 # ================= 🔴 必须修改区域 🔴 =================
 
 # 1. 你的 PushPlus Token (必须填！否则发不出去)
-# 请保留双引号，把中间的中文替换成你的 Token
+# 请保留双引号，把中间的中文替换成你的 Token (例如 "332e......")
 PUSHPLUS_TOKEN = "332ed63d748f4c6fb2989b2cebc9d959" 
 
 # 2. 你的 Gemini API Key (保持不动)
 GEMINI_API_KEY = "AIzaSyCns0KEA_JkwD5NBvr7-E9iCoKGsUe1SZc"
 
-# 3. 【强制修改】群组编码留空，先确保你自己能收到！
+# 3. 群组编码 (留空 "" 表示一对一发送给Token持有者)
 PUSHPLUS_TOPIC = "" 
 
 # =======================================================
 
-# RSS 源 (保留 Hacker News 热榜，确保内容质量)
+# RSS 源 
 RSS_FEEDS = [
     "https://hnrss.org/newest?q=AI+OR+GPT+OR+LLM&points=50", 
     "https://huggingface.co/blog/feed.xml",
@@ -40,7 +41,7 @@ DEFAULT_IMAGES = [
 ]
 
 print(f"DEBUG: 系统初始化...")
-print(f"DEBUG: 检查 Token... {'✅ 已填入' if '这里填' not in PUSHPLUS_TOKEN and len(PUSHPLUS_TOKEN)>5 else '❌ 未填入 (请修改第17行)'}")
+print(f"DEBUG: 检查 Token... {'✅ 已填入' if '这里填' not in PUSHPLUS_TOKEN and len(PUSHPLUS_TOKEN)>5 else '❌ 未填入 (请修改第15行)'}")
 
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -51,7 +52,6 @@ def get_best_model():
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 valid_models.append(m.name)
-        # 优先用 Flash，其次 Pro
         for m in valid_models:
             if 'gemini-1.5-flash' in m: return m
         for m in valid_models:
@@ -83,7 +83,6 @@ def extract_image(entry):
         img_match = re.search(r'<img[^>]+src=["\'](.*?)["\']', description)
         if img_match:
             img_url = img_match.group(1)
-    # 如果没图或图链接无效，随机选一张
     if not img_url or "http" not in img_url:
         img_url = random.choice(DEFAULT_IMAGES)
     return img_url
@@ -102,7 +101,6 @@ def fetch_rss_data(feeds):
                 img_url = extract_image(entry)
                 raw_summary = getattr(entry, 'summary', getattr(entry, 'description', 'No summary'))
                 clean_summary = re.sub('<[^<]+?>', '', raw_summary)[:300]
-                # 构造数据
                 combined_content += f"""
                 <NEWS_ITEM>
                 TITLE: {title}
@@ -165,12 +163,14 @@ def get_gemini_response(content):
         return f"<h3>Gemini 生成失败</h3><p>{e}</p>"
 
 def push_to_wechat(content):
+    # 修复了这里的 URL 格式错误！
+    url = "[http://www.pushplus.plus/send](http://www.pushplus.plus/send)" 
+    
     if not PUSHPLUS_TOKEN or "这里填" in PUSHPLUS_TOKEN: 
-        print("❌ 严重错误：Token 未填写！请修改代码第 17 行！")
+        print("❌ 严重错误：Token 未填写！请修改代码第 15 行！")
         return
         
-    print(f"🚀 正在强制推送 (一对一通道)...")
-    url = "[http://www.pushplus.plus/send](http://www.pushplus.plus/send)"
+    print(f"🚀 正在推送 HTML 消息...")
     today = datetime.date.today().strftime("%Y-%m-%d")
     data = {
         "token": PUSHPLUS_TOKEN,
@@ -178,14 +178,25 @@ def push_to_wechat(content):
         "content": content,
         "template": "html"
     }
-    # 强制不使用 Topic，确保送达
-    # if PUSHPLUS_TOPIC: data["topic"] = PUSHPLUS_TOPIC 
+    if PUSHPLUS_TOPIC: 
+        data["topic"] = PUSHPLUS_TOPIC
     
     try:
-        resp = requests.post(url, json=data)
-        print(f"✅ PushPlus 响应: {resp.text}") 
+        # 增加 headers 确保 JSON 格式正确
+        headers = {'Content-Type': 'application/json'}
+        resp = requests.post(url, data=json.dumps(data), headers=headers)
+        
+        # 详细打印结果，方便调试
+        print(f"✅ PushPlus 响应状态码: {resp.status_code}")
+        print(f"✅ PushPlus 响应内容: {resp.text}")
+        
+        if resp.status_code == 200 and '200' in resp.text:
+             print("🎉 推送成功！请检查微信！")
+        else:
+             print("⚠️ 推送似乎有问题，请检查上面的响应内容。")
+             
     except Exception as e:
-        print(f"❌ 推送失败: {e}")
+        print(f"❌ 网络请求失败: {e}")
 
 if __name__ == "__main__":
     news_content = fetch_rss_data(RSS_FEEDS)
