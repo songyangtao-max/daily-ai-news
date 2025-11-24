@@ -9,7 +9,7 @@ import time
 # ================= 配置区域 =================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
-# 填入你的群组编码，如果发给自己就留空 ""
+# 填入你的群组编码 (如果发给自己就留空 "")
 PUSHPLUS_TOPIC = "" 
 
 # RSS 源列表
@@ -21,34 +21,44 @@ RSS_FEEDS = [
 ]
 # ===========================================
 
+# 检查环境
+print(f"DEBUG: 检查 API Key... {'✅ 已获取' if GEMINI_API_KEY else '❌ 未获取'}")
+print(f"DEBUG: 检查 PushPlus Token... {'✅ 已获取' if PUSHPLUS_TOKEN else '❌ 未获取'}")
+
 if not GEMINI_API_KEY:
-    print("❌ 错误：未检测到 GEMINI_API_KEY")
+    print("❌ 致命错误：没有找到 API Key，程序无法运行。")
     sys.exit(1)
 
 genai.configure(api_key=GEMINI_API_KEY)
 
 def get_gemini_response(prompt):
     """智能尝试不同的模型，防止报错"""
-    # 优先列表：先试 1.5 Flash (快且免费额度高)，不行再试老款 Pro
+    # 调整顺序：先试最稳的老款 Pro，再试新款 Flash
     models_to_try = [
-        'gemini-1.5-flash', 
-        'gemini-1.5-pro',
-        'gemini-pro'
+        'gemini-pro',          # 最稳，几乎不报错
+        'gemini-1.5-flash',    # 快，但偶尔 404
+        'gemini-1.5-pro'       # 备用
     ]
+    
+    last_error = ""
     
     for model_name in models_to_try:
         try:
             print(f"🤖 正在尝试使用模型: {model_name} ...")
             model = genai.GenerativeModel(model_name)
+            # 这里的 prompt 稍微简单点，减少报错概率
             response = model.generate_content(prompt)
+            print(f"✅ 模型 {model_name} 调用成功！")
             return response.text
         except Exception as e:
             print(f"⚠️ 模型 {model_name} 失败: {e}")
+            last_error = str(e)
             print("🔄 正在自动切换到下一个备用模型...")
-            time.sleep(2) # 歇两秒再试
+            time.sleep(2) 
             continue
             
-    return "❌ 所有模型都尝试失败，请检查 API Key 或网络状态。"
+    # 如果都失败了，返回错误信息，并在微信里告诉你
+    return f"❌ 所有模型都挂了。\n最后一次报错信息：{last_error}\n请检查 API Key 是否有效。"
 
 def fetch_rss_data(feeds):
     print("📡 正在抓取新闻...")
@@ -69,10 +79,10 @@ def fetch_rss_data(feeds):
 
 def push_to_wechat(content):
     if not PUSHPLUS_TOKEN:
-        print("⚠️ 未设置 PUSHPLUS_TOKEN，跳过推送")
+        print("⚠️ 未设置 PUSHPLUS_TOKEN，无法发送。")
         return
 
-    print("🚀 正在推送到微信...")
+    print("🚀 正在强行推送到微信...")
     url = "http://www.pushplus.plus/send"
     today = datetime.date.today().strftime("%Y-%m-%d")
     
@@ -86,36 +96,39 @@ def push_to_wechat(content):
         data["topic"] = PUSHPLUS_TOPIC
     
     try:
-        requests.post(url, json=data)
-        print("✅ 推送请求已发送")
+        response = requests.post(url, json=data)
+        print(f"✅ PushPlus 响应结果: {response.text}")
     except Exception as e:
-        print(f"❌ 推送失败: {e}")
+        print(f"❌ 推送彻底失败: {e}")
 
 if __name__ == "__main__":
     news_content = fetch_rss_data(RSS_FEEDS)
-    if len(news_content) > 50:
-        print("\n" + "="*30)
-        
-        # 构建 Prompt
-        today = datetime.date.today().strftime("%Y-%m-%d")
-        prompt = f"""
-        你是一个科技主编。请根据以下RSS抓取的AI新闻，为家人朋友生成一份简报。
-        日期：{today}
-        要求：
-        1. 用中文，通俗易懂，像发朋友圈一样。
-        2. 只选最重要的 5 条。
-        3. 每条格式：emoji 标题 (来源) \n 一句话总结...
-        4. 结尾给一句简短的个人见解/辣评。
-        5. 不要使用Markdown代码块。
-        内容：{news_content}
-        """
-        
-        # 调用智能生成函数
-        report = get_gemini_response(prompt)
-        print(report)
-        print("="*30 + "\n")
-        
-        if "❌" not in report:
-            push_to_wechat(report)
-    else:
-        print("⚠️ 未抓取到足够数据。")
+    
+    # 哪怕没抓到新闻，也要跑后面的逻辑，防止静默失败
+    if len(news_content) < 10:
+        news_content = "今日 RSS 源似乎没有更新，或者抓取失败。请检查 RSS 链接。"
+
+    print("\n" + "="*30)
+    
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    prompt = f"""
+    你是一个科技主编。请根据以下RSS抓取的AI新闻，为家人朋友生成一份简报。
+    日期：{today}
+    
+    要求：
+    1. 用中文，通俗易懂，像发朋友圈一样。
+    2. 只选最重要的 5 条。
+    3. 每条格式：emoji 标题 (来源) \n 一句话总结...
+    4. 结尾给一句简短的个人见解/辣评。
+    5. 不要使用Markdown代码块。
+
+    内容：{news_content}
+    """
+    
+    # 获取结果（无论成功还是报错）
+    report = get_gemini_response(prompt)
+    print("📝 生成的内容摘要(前100字):", report[:100])
+    print("="*30 + "\n")
+    
+    # 【关键修改】删除了 if 判断，无论内容是什么，都强制发送！
+    push_to_wechat(report)
