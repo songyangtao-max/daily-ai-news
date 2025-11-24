@@ -15,7 +15,7 @@ GEMINI_API_KEY = "AIzaSyCns0KEA_JkwD5NBvr7-E9iCoKGsUe1SZc"
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
 
 # 3. 群组编码 (没有就留空 "")
-PUSHPLUS_TOPIC = "" 
+PUSHPLUS_TOPIC = "family_news" 
 
 # RSS 源列表
 RSS_FEEDS = [
