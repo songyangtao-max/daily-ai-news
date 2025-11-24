@@ -10,7 +10,7 @@ import time
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
 # 填入你的群组编码，如果发给自己就留空 ""
-PUSHPLUS_TOPIC = "family_news" 
+PUSHPLUS_TOPIC = "" 
 
 # RSS 源列表
 RSS_FEEDS = [
