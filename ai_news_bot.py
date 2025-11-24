@@ -5,34 +5,39 @@ import datetime
 import os
 import sys
 import re
+import random
 
 # ================= 配置区域 =================
 
-# 1. 【直接填入】你的 Gemini API Key
+# 1. API Key
 GEMINI_API_KEY = "AIzaSyCns0KEA_JkwD5NBvr7-E9iCoKGsUe1SZc"
 
-# 2. PushPlus Token (从 Secrets 读取)
+# 2. PushPlus Token
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
 
 # 3. 群组编码 (没有就留空 "")
 PUSHPLUS_TOPIC = "family_news" 
 
-# 4. 【关键升级】使用“热度筛选”后的 RSS 源
-# 这里特意选用了 Hacker News (AI分类, 且点赞数>50) 的源，确保是热门文章
+# 4. RSS 源 (保留了热度筛选)
 RSS_FEEDS = [
-    # Hacker News 上包含 'AI' 或 'GPT' 且分数大于50的热门讨论
-    "https://hnrss.org/newest?q=AI+OR+GPT+OR+LLM&points=50",
-    # HuggingFace 每日精选
+    "https://hnrss.org/newest?q=AI+OR+GPT+OR+LLM&points=50", # HN 热榜
     "https://huggingface.co/blog/feed.xml",
-    # OpenAI 官方 (必看)
     "https://openai.com/blog/rss.xml",
-    # The Verge AI 版块
     "https://www.theverge.com/rss/artificial-intelligence/index.xml"
+]
+
+# 5. 【新增】高颜值备用图库 (当文章没图时，随机从这里选一张)
+DEFAULT_IMAGES = [
+    "https://images.unsplash.com/photo-1677442136019-21780ecad995?w=800&q=80", # AI芯片
+    "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=800&q=80", # 抽象AI
+    "https://images.unsplash.com/photo-1625314897458-9cbb7e2d93e3?w=800&q=80", # 神经网络
+    "https://images.unsplash.com/photo-1676299081847-824d16b71d08?w=800&q=80", # 机器人手
+    "https://images.unsplash.com/photo-1555255707-c07966088b7b?w=800&q=80", # 科技代码
+    "https://images.unsplash.com/photo-1617791160505-6f00504e3519?w=800&q=80", # 赛博朋克
 ]
 # ===========================================
 
-print(f"DEBUG: 正在初始化...")
-
+print(f"DEBUG: 系统初始化...")
 genai.configure(api_key=GEMINI_API_KEY)
 
 def get_best_model():
@@ -43,7 +48,7 @@ def get_best_model():
             if 'generateContent' in m.supported_generation_methods:
                 valid_models.append(m.name)
         
-        # 优先用 Flash (快/免费)，其次用 Pro
+        # 优先用 Flash，其次 Pro
         for m in valid_models:
             if 'gemini-1.5-flash' in m: return m
         for m in valid_models:
@@ -56,35 +61,42 @@ def get_best_model():
     return None
 
 def extract_image(entry):
-    """尝试从 RSS 条目中提取图片链接"""
-    # 1. 尝试 media_content (常见于标准 RSS)
+    """提取图片，如果没有就随机返回一张备用图"""
+    img_url = ""
+    # 1. 尝试 media_content
     if 'media_content' in entry:
         for media in entry.media_content:
             if 'image' in media.get('medium', '') or 'image' in media.get('type', ''):
-                return media['url']
+                img_url = media['url']
+                break
     
     # 2. 尝试 media_thumbnail
-    if 'media_thumbnail' in entry:
-        return entry.media_thumbnail[0]['url']
+    if not img_url and 'media_thumbnail' in entry:
+        img_url = entry.media_thumbnail[0]['url']
         
-    # 3. 尝试 enclosure (常见的播客或图片附件)
-    if 'enclosures' in entry:
+    # 3. 尝试 enclosure
+    if not img_url and 'enclosures' in entry:
         for enclosure in entry.enclosures:
             if 'image' in enclosure.get('type', ''):
-                return enclosure['href']
+                img_url = enclosure['href']
+                break
                 
-    # 4. 如果都没有，尝试从 description 的 HTML 里用正则找 <img src="...">
-    description = getattr(entry, 'summary', getattr(entry, 'description', ''))
-    img_match = re.search(r'<img[^>]+src=["\'](.*?)["\']', description)
-    if img_match:
-        return img_match.group(1)
+    # 4. 正则匹配 HTML
+    if not img_url:
+        description = getattr(entry, 'summary', getattr(entry, 'description', ''))
+        img_match = re.search(r'<img[^>]+src=["\'](.*?)["\']', description)
+        if img_match:
+            img_url = img_match.group(1)
+    
+    # 【关键】如果还是没图，随机选一张备用图！
+    if not img_url or "http" not in img_url:
+        img_url = random.choice(DEFAULT_IMAGES)
         
-    return "" # 没找到图片
+    return img_url
 
 def fetch_rss_data(feeds):
-    print("📡 正在抓取热门新闻...")
+    print("📡 正在抓取新闻...")
     combined_content = ""
-    article_count = 0
     
     for feed_url in feeds:
         try:
@@ -92,29 +104,24 @@ def fetch_rss_data(feeds):
             feed_title = feed.feed.get('title', 'Unknown Source')
             print(f"   -> 源: {feed_title}")
             
-            # 每个源只取前 2 条 (因为我们有很多源，避免太长)
             for entry in feed.entries[:2]: 
                 title = entry.title
                 link = entry.link
-                # 提取图片
-                img_url = extract_image(entry)
+                img_url = extract_image(entry) # 这里现在一定会有图
                 
-                # 清理 summary 中的 HTML 标签，只保留文字给 Gemini 看（节省 Token）
                 raw_summary = getattr(entry, 'summary', getattr(entry, 'description', 'No summary'))
-                clean_summary = re.sub('<[^<]+?>', '', raw_summary)[:300] # 只取前300字
+                clean_summary = re.sub('<[^<]+?>', '', raw_summary)[:300]
                 
-                # 拼接数据给 Gemini，注意这里我们把 image_url 也放进去了
+                # 构造 JSON 风格的数据给 Gemini，方便它理解结构
                 combined_content += f"""
-                ---
-                【来源】{feed_title}
-                【标题】{title}
-                【链接】{link}
-                【图片链接】{img_url}
-                【摘要】{clean_summary}
-                ---
+                <NEWS_ITEM>
+                TITLE: {title}
+                SOURCE: {feed_title}
+                LINK: {link}
+                IMAGE: {img_url}
+                SUMMARY: {clean_summary}
+                </NEWS_ITEM>
                 """
-                article_count += 1
-                
         except Exception as e:
             print(f"⚠️ 解析错误 {feed_url}: {e}")
             
@@ -124,56 +131,73 @@ def get_gemini_response(content):
     model_name = get_best_model()
     if not model_name: return "❌ 错误：没找到可用模型。"
 
-    print(f"🤖 使用模型: {model_name} 进行图文排版...")
-    
+    print(f"🤖 使用模型: {model_name} 生成 HTML...")
     today = datetime.date.today().strftime("%Y-%m-%d")
     
-    # 核心 Prompt：教 Gemini 怎么排版图片
+    # 核心 Prompt：要求直接输出 HTML 卡片代码
     prompt = f"""
-    你是一个专业的科技主编。请根据以下抓取到的热门 AI 新闻，生成一份“图文早报”。
-    日期：{today}
+    你是一个高级前端工程师兼科技主编。请根据以下新闻数据，生成一份**HTML格式**的早报。
     
-    【重要排版要求】：
-    1. 请从我提供的内容中挑选 **最热门、最有价值的 5-6 条** 新闻。
-    2. **必须输出 Markdown 格式**。
-    3. **如果有【图片链接】且不为空**，请在每条新闻的开头使用 Markdown 图片语法显示图片：`![封面](图片链接)`。
-       注意：如果【图片链接】为空，就不要显示图片，只显示文字。
-    4. 每条新闻的格式如下：
-       
-       ![封面](图片链接) 
-       ### 标题 (加粗)
-       > 来源媒体 | 📅 日期
-       
-       这里写一句话的中文通俗总结，要吸引人，像公众号爆款文章的摘要。
-       [🔗 点击阅读原文](链接)
-       
-       ---
-       
-    5. 结尾给一句简短的行业趋势点评。
-
-    【原始数据】：
+    【数据源】：
     {content}
+
+    【要求】：
+    1. 挑选 5 条最重要的新闻。
+    2. **直接输出 HTML 代码**，不要包含 ```html 标记，也不要 markdown。
+    3. 使用我指定的 CSS 样式，确保在微信里显示美观。
+    
+    【HTML 模板结构（请严格模仿）】：
+    
+    <div style="max-width: 600px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f5f5f5; padding: 15px; border-radius: 10px;">
+        
+        <!-- 头部 -->
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h1 style="color: #333; font-size: 24px; margin: 0;">📅 AI 每日精选</h1>
+            <p style="color: #666; font-size: 14px; margin: 5px 0;">{today} | 由 Gemini 整理</p>
+        </div>
+
+        <!-- 循环生成新闻卡片 -->
+        <div style="background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 20px;">
+            <a href="{{链接}}" style="text-decoration: none; color: inherit; display: block;">
+                <div style="height: 160px; overflow: hidden; background-color: #eee;">
+                    <img src="{{图片链接}}" style="width: 100%; height: 100%; object-fit: cover;" alt="cover">
+                </div>
+                <div style="padding: 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 18px; color: #222; line-height: 1.4; font-weight: 700;">{{标题}}</h3>
+                    <div style="font-size: 12px; color: #999; margin-bottom: 10px;">{{来源}}</div>
+                    <p style="margin: 0; font-size: 14px; color: #555; line-height: 1.6; text-align: justify;">{{一句话总结}}</p>
+                </div>
+            </a>
+        </div>
+        <!-- 卡片结束 -->
+
+        <!-- 底部 -->
+        <div style="text-align: center; color: #aaa; font-size: 12px; margin-top: 20px;">
+            <p>🤖 本内容由 AI 自动生成，仅供参考</p>
+        </div>
+    </div>
     """
     
     try:
         model = genai.GenerativeModel(model_name)
         response = model.generate_content(prompt)
-        return response.text
+        text = response.text
+        # 清理可能存在的 markdown 标记
+        text = text.replace("```html", "").replace("```", "")
+        return text
     except Exception as e:
-        return f"❌ Gemini 生成失败: {e}"
+        return f"<h3>Gemini 生成失败</h3><p>{e}</p>"
 
 def push_to_wechat(content):
-    if not PUSHPLUS_TOKEN: 
-        print("⚠️ 未设置 Token，跳过推送")
-        return
-    print("🚀 正在推送图文消息...")
-    url = "http://www.pushplus.plus/send"
+    if not PUSHPLUS_TOKEN: return
+    print("🚀 正在推送 HTML 消息...")
+    url = "[http://www.pushplus.plus/send](http://www.pushplus.plus/send)"
     today = datetime.date.today().strftime("%Y-%m-%d")
     data = {
         "token": PUSHPLUS_TOKEN,
-        "title": f"AI图文早报 | {today}",
+        "title": f"AI早报 | {today}",
         "content": content,
-        "template": "markdown" # 必须是 markdown 才能显示图片
+        "template": "html"  # 【关键】这里改成了 html 模式
     }
     if PUSHPLUS_TOPIC: data["topic"] = PUSHPLUS_TOPIC
     
@@ -186,9 +210,7 @@ def push_to_wechat(content):
 if __name__ == "__main__":
     news_content = fetch_rss_data(RSS_FEEDS)
     if len(news_content) < 10:
-        print("⚠️ 内容太少，无法生成。")
+        print("⚠️ 内容太少")
     else:
-        report = get_gemini_response(news_content)
-        # 打印预览
-        print(report[:200] + "...")
-        push_to_wechat(report)
+        html_report = get_gemini_response(news_content)
+        push_to_wechat(html_report)
