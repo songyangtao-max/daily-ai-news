@@ -31,7 +31,7 @@ if not GEMINI_API_KEY:
 
 # 初始化 Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash-exp') 
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 def fetch_rss_data(feeds):
     """抓取 RSS 数据"""
