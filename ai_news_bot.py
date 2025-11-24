@@ -7,39 +7,40 @@ import sys
 import re
 import random
 
-# ================= 配置区域 =================
+# ================= 🔴 必须修改区域 🔴 =================
 
-# 1. API Key (你之前填的，保持不动)
-GEMINI_API_KEY = "AIzaSyCns0KEA_JkwD5NBvr7-E9iCoKGsUe1SZc"
-
-# 2. 【关键修改】PushPlus Token 
-# 请把你的 Token 粘贴在引号里，不要用 os.environ 了，直接写死最稳！
+# 1. 你的 PushPlus Token (必须填！否则发不出去)
+# 请保留双引号，把中间的中文替换成你的 Token
 PUSHPLUS_TOKEN = "332ed63d748f4c6fb2989b2cebc9d959" 
 
-# 3. 群组编码 (你之前设置的)
-PUSHPLUS_TOPIC = "family_news" 
+# 2. 你的 Gemini API Key (保持不动)
+GEMINI_API_KEY = "AIzaSyCns0KEA_JkwD5NBvr7-E9iCoKGsUe1SZc"
 
-# 4. RSS 源
+# 3. 【强制修改】群组编码留空，先确保你自己能收到！
+PUSHPLUS_TOPIC = "" 
+
+# =======================================================
+
+# RSS 源 (保留 Hacker News 热榜，确保内容质量)
 RSS_FEEDS = [
-    "https://hnrss.org/newest?q=AI+OR+GPT+OR+LLM&points=50",
+    "https://hnrss.org/newest?q=AI+OR+GPT+OR+LLM&points=50", 
     "https://huggingface.co/blog/feed.xml",
     "https://openai.com/blog/rss.xml",
     "https://www.theverge.com/rss/artificial-intelligence/index.xml"
 ]
 
-# 5. 高颜值备用图库
+# 高颜值备用图库
 DEFAULT_IMAGES = [
     "https://images.unsplash.com/photo-1677442136019-21780ecad995?w=800&q=80", 
     "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=800&q=80",
     "https://images.unsplash.com/photo-1625314897458-9cbb7e2d93e3?w=800&q=80",
-    "https://images.unsplash.com/photo-1676299081847-824d16b71d08?w=800&q=80",
     "https://images.unsplash.com/photo-1555255707-c07966088b7b?w=800&q=80",
     "https://images.unsplash.com/photo-1617791160505-6f00504e3519?w=800&q=80",
+    "https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=800&q=80",
 ]
-# ===========================================
 
 print(f"DEBUG: 系统初始化...")
-print(f"DEBUG: PushPlus Token 状态: {'✅ 已填入' if '这里填' not in PUSHPLUS_TOKEN and len(PUSHPLUS_TOKEN) > 5 else '❌ 未填入 (请去第16行修改)'}")
+print(f"DEBUG: 检查 Token... {'✅ 已填入' if '这里填' not in PUSHPLUS_TOKEN and len(PUSHPLUS_TOKEN)>5 else '❌ 未填入 (请修改第17行)'}")
 
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -50,6 +51,7 @@ def get_best_model():
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 valid_models.append(m.name)
+        # 优先用 Flash，其次 Pro
         for m in valid_models:
             if 'gemini-1.5-flash' in m: return m
         for m in valid_models:
@@ -81,6 +83,7 @@ def extract_image(entry):
         img_match = re.search(r'<img[^>]+src=["\'](.*?)["\']', description)
         if img_match:
             img_url = img_match.group(1)
+    # 如果没图或图链接无效，随机选一张
     if not img_url or "http" not in img_url:
         img_url = random.choice(DEFAULT_IMAGES)
     return img_url
@@ -99,6 +102,7 @@ def fetch_rss_data(feeds):
                 img_url = extract_image(entry)
                 raw_summary = getattr(entry, 'summary', getattr(entry, 'description', 'No summary'))
                 clean_summary = re.sub('<[^<]+?>', '', raw_summary)[:300]
+                # 构造数据
                 combined_content += f"""
                 <NEWS_ITEM>
                 TITLE: {title}
@@ -161,12 +165,11 @@ def get_gemini_response(content):
         return f"<h3>Gemini 生成失败</h3><p>{e}</p>"
 
 def push_to_wechat(content):
-    # 强制检查：如果没有填 Token，直接报错提醒
     if not PUSHPLUS_TOKEN or "这里填" in PUSHPLUS_TOKEN: 
-        print("❌ 严重错误：你忘记在第 16 行填入 PushPlus Token 了！")
+        print("❌ 严重错误：Token 未填写！请修改代码第 17 行！")
         return
         
-    print(f"🚀 正在推送 HTML 消息 (群组: {PUSHPLUS_TOPIC or '个人'})...")
+    print(f"🚀 正在强制推送 (一对一通道)...")
     url = "[http://www.pushplus.plus/send](http://www.pushplus.plus/send)"
     today = datetime.date.today().strftime("%Y-%m-%d")
     data = {
@@ -175,19 +178,21 @@ def push_to_wechat(content):
         "content": content,
         "template": "html"
     }
-    if PUSHPLUS_TOPIC: 
-        data["topic"] = PUSHPLUS_TOPIC
+    # 强制不使用 Topic，确保送达
+    # if PUSHPLUS_TOPIC: data["topic"] = PUSHPLUS_TOPIC 
     
     try:
         resp = requests.post(url, json=data)
-        print(f"✅ 推送响应: {resp.text}") # 打印出来看结果
+        print(f"✅ PushPlus 响应: {resp.text}") 
     except Exception as e:
-        print(f"❌ 推送网络错误: {e}")
+        print(f"❌ 推送失败: {e}")
 
 if __name__ == "__main__":
     news_content = fetch_rss_data(RSS_FEEDS)
     if len(news_content) < 10:
-        print("⚠️ 内容太少，无法生成。")
-    else:
-        html_report = get_gemini_response(news_content)
-        push_to_wechat(html_report)
+        print("⚠️ 内容太少，但我们还是尝试生成...")
+    
+    html_report = get_gemini_response(news_content)
+    # 打印前200字符方便调试
+    print(f"DEBUG: 生成内容预览: {html_report[:100]}...")
+    push_to_wechat(html_report)
